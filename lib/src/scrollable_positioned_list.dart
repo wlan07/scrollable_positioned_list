@@ -325,9 +325,8 @@ class _ScrollablePositionedListState extends State<ScrollablePositionedList> wit
     final external = widget.controller;
     primary = _ListDisplayDetails(const ValueKey('Ping'), controller: external);
 
-    // Secondary is used only during long-distance transitions. To keep Scrollbar stable,
-    // use the same controller if external is provided; otherwise its own controller.
-    secondary = _ListDisplayDetails(const ValueKey('Pong'), controller: external);
+    // Secondary MUST NOT share the same controller.
+    secondary = _ListDisplayDetails(const ValueKey('Pong'));
 
     ItemPosition? initialPosition = PageStorage.of(context).readState(context);
     primary.target = initialPosition?.index ?? widget.initialScrollIndex;
@@ -372,14 +371,13 @@ class _ScrollablePositionedListState extends State<ScrollablePositionedList> wit
     secondary.itemPositionsNotifier.itemPositions.removeListener(_updatePositions);
     _animationController?.dispose();
 
-    // Only dispose controllers if we created them internally.
+    // If external controller was NOT provided, we own primary's controller.
     if (widget.controller == null) {
       primary.scrollController.dispose();
-      // If controller == null we created separate ones; dispose secondary too.
-      if (secondary.scrollController != primary.scrollController) {
-        secondary.scrollController.dispose();
-      }
     }
+
+    // We always own secondary's controller.
+    secondary.scrollController.dispose();
 
     super.dispose();
   }
