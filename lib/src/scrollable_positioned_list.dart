@@ -281,19 +281,7 @@ class ItemScrollController {
 /// This is an experimental API and is subject to change.
 /// Behavior may be ill-defined in some cases.  Please file bugs.
 class ScrollOffsetController {
-  /// NEW: exposes the currently active internal ScrollController (primary/secondary)
-  /// so external widgets (e.g., Scrollbar) can bind to the correct one.
   final ValueNotifier<ScrollController?> activeScrollController = ValueNotifier<ScrollController?>(null);
-
-  Future<void> animateScroll({required double offset, required Duration duration, Curve curve = Curves.linear}) async {
-    final currentPosition = _scrollableListState!.primary.scrollController.offset;
-    final newPosition = currentPosition + offset;
-    await _scrollableListState!.primary.scrollController.animateTo(
-      newPosition,
-      duration: duration,
-      curve: curve,
-    );
-  }
 
   _ScrollablePositionedListState? _scrollableListState;
 
@@ -301,15 +289,49 @@ class ScrollOffsetController {
     assert(_scrollableListState == null);
     _scrollableListState = scrollableListState;
 
-    // NEW: initial active controller is the primary list controller
-    activeScrollController.value = scrollableListState.primary.scrollController;
+    // IMPORTANT: don't notify during build
+    _setActiveControllerSafely(_scrollableListState!.primary.scrollController);
   }
 
   void _detach() {
     _scrollableListState = null;
+    // Optional: leave last controller, or clear safely
+    _setActiveControllerSafely(null);
+  }
 
-    // NEW: clear active controller
-    activeScrollController.value = null;
+  void _setActiveControllerSafely(ScrollController? controller) {
+    if (activeScrollController.value == controller) return;
+
+    void assign() {
+      if (activeScrollController.value == controller) return;
+      activeScrollController.value = controller;
+    }
+
+    final phase = SchedulerBinding.instance.schedulerPhase;
+
+    // If we're in any build/layout/paint related phase, defer to next frame.
+    if (phase == SchedulerPhase.persistentCallbacks ||
+        phase == SchedulerPhase.transientCallbacks ||
+        phase == SchedulerPhase.midFrameMicrotasks) {
+      SchedulerBinding.instance.addPostFrameCallback((_) => assign());
+    } else {
+      // microtask is fine when not building
+      scheduleMicrotask(assign);
+    }
+  }
+
+  Future<void> animateScroll({
+    required double offset,
+    required Duration duration,
+    Curve curve = Curves.linear,
+  }) async {
+    final currentPosition = _scrollableListState!.primary.scrollController.offset;
+    final newPosition = currentPosition + offset;
+    await _scrollableListState!.primary.scrollController.animateTo(
+      newPosition,
+      duration: duration,
+      curve: curve,
+    );
   }
 }
 
@@ -633,8 +655,6 @@ class _ScrollablePositionedListState extends State<ScrollablePositionedList> wit
     if (mounted) {
       setState(() {
         if (opacity.value >= 0.5) {
-          // Secondary [ListView] is more visible than the primary; make it the
-          // new primary.
           var temp = primary;
           primary = secondary;
           secondary = temp;
@@ -643,8 +663,8 @@ class _ScrollablePositionedListState extends State<ScrollablePositionedList> wit
         opacity.parent = const AlwaysStoppedAnimation<double>(0);
       });
 
-      // NEW: after transition ends (and possible swap), primary is active again
-      _setActiveController(primary.scrollController);
+      // IMPORTANT: update active controller AFTER the frame, not during build.
+      widget.scrollOffsetController?._setActiveControllerSafely(primary.scrollController);
     }
   }
 
