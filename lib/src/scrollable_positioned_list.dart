@@ -281,6 +281,10 @@ class ItemScrollController {
 /// This is an experimental API and is subject to change.
 /// Behavior may be ill-defined in some cases.  Please file bugs.
 class ScrollOffsetController {
+  /// NEW: exposes the currently active internal ScrollController (primary/secondary)
+  /// so external widgets (e.g., Scrollbar) can bind to the correct one.
+  final ValueNotifier<ScrollController?> activeScrollController = ValueNotifier<ScrollController?>(null);
+
   Future<void> animateScroll({required double offset, required Duration duration, Curve curve = Curves.linear}) async {
     final currentPosition = _scrollableListState!.primary.scrollController.offset;
     final newPosition = currentPosition + offset;
@@ -296,10 +300,16 @@ class ScrollOffsetController {
   void _attach(_ScrollablePositionedListState scrollableListState) {
     assert(_scrollableListState == null);
     _scrollableListState = scrollableListState;
+
+    // NEW: initial active controller is the primary list controller
+    activeScrollController.value = scrollableListState.primary.scrollController;
   }
 
   void _detach() {
     _scrollableListState = null;
+
+    // NEW: clear active controller
+    activeScrollController.value = null;
   }
 }
 
@@ -317,11 +327,18 @@ class _ScrollablePositionedListState extends State<ScrollablePositionedList> wit
 
   double previousOffset = 0;
 
+  void _setActiveController(ScrollController controller) {
+    final soc = widget.scrollOffsetController;
+    if (soc == null) return;
+    if (soc.activeScrollController.value == controller) return;
+    soc.activeScrollController.value = controller;
+  }
+
   @override
   void initState() {
     super.initState();
 
-    // Use external controller if provided (enables Scrollbar attachment).
+    // Use external controller if provided (enables Scrollbar attachment) for PRIMARY only.
     final external = widget.controller;
     primary = _ListDisplayDetails(const ValueKey('Ping'), controller: external);
 
@@ -337,6 +354,9 @@ class _ScrollablePositionedListState extends State<ScrollablePositionedList> wit
 
     widget.itemScrollController?._attach(this);
     widget.scrollOffsetController?._attach(this);
+
+    // NEW: ensure the active controller starts as primary
+    _setActiveController(primary.scrollController);
 
     primary.itemPositionsNotifier.itemPositions.addListener(_updatePositions);
     secondary.itemPositionsNotifier.itemPositions.addListener(_updatePositions);
@@ -502,6 +522,9 @@ class _ScrollablePositionedListState extends State<ScrollablePositionedList> wit
       primary.target = index;
       primary.alignment = alignment;
     });
+
+    // NEW: jumpTo operates on primary
+    _setActiveController(primary.scrollController);
   }
 
   Future<void> _scrollTo({
@@ -584,6 +607,10 @@ class _ScrollablePositionedListState extends State<ScrollablePositionedList> wit
         secondary.alignment = alignment;
         _isTransitioning = true;
       });
+
+      // NEW: during transition, secondary becomes the active scrollable
+      _setActiveController(secondary.scrollController);
+
       await Future.wait<void>([startCompleter.future, endCompleter.future]);
       _stopScroll();
     }
@@ -615,6 +642,9 @@ class _ScrollablePositionedListState extends State<ScrollablePositionedList> wit
         _isTransitioning = false;
         opacity.parent = const AlwaysStoppedAnimation<double>(0);
       });
+
+      // NEW: after transition ends (and possible swap), primary is active again
+      _setActiveController(primary.scrollController);
     }
   }
 
